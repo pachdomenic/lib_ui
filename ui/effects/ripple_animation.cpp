@@ -6,6 +6,7 @@
 //
 #include "ui/effects/ripple_animation.h"
 
+#include "base/random.h"
 #include "ui/effects/animations.h"
 #include "ui/painter.h"
 #include "ui/ui_utility.h"
@@ -53,6 +54,9 @@ private:
 	Ui::Animations::Simple _hide;
 	QPixmap _cache;
 	QImage _frame;
+	std::vector<uchar> _noisePattern;
+	int _noiseBlockW = 0;
+	int _noiseBlockH = 0;
 
 };
 
@@ -81,7 +85,14 @@ RippleAnimation::Ripple::Ripple(
 			_radiusTo,
 			style::point::dotProduct(_origin - point, _origin - point));
 	}
-	_radiusTo = qRound(sqrt(_radiusTo));
+	_radiusTo = qRound(sqrt(float64(_radiusTo)) / 0.55);
+
+	const auto w = _frame.width();
+	const auto h = _frame.height();
+	_noiseBlockW = (w + 1) / 2;
+	_noiseBlockH = (h + 1) / 2;
+	_noisePattern.resize(_noiseBlockW * _noiseBlockH);
+	base::RandomFill(_noisePattern.data(), _noisePattern.size());
 
 	_show.start(_update, 0., 1., _st.showDuration, anim::easeOutQuint);
 }
@@ -124,17 +135,85 @@ void RippleAnimation::Ripple::paint(
 		{
 			QPainter p(&_frame);
 			p.setPen(Qt::NoPen);
-			if (colorOverride) {
-				p.setBrush(*colorOverride);
-			} else {
-				p.setBrush(_st.color);
-			}
+			const auto color = colorOverride
+				? *colorOverride
+				: QColor(_st.color->c);
+			const auto safeRadius = std::max(radius, 1);
+			auto gradient = QRadialGradient(
+				QPointF(_origin),
+				safeRadius);
+			gradient.setColorAt(0.0, color);
+			gradient.setColorAt(0.55, color);
+			gradient.setColorAt(1.0, QColor(
+				color.red(),
+				color.green(),
+				color.blue(),
+				0));
+			p.setBrush(gradient);
 			{
 				PainterHighQualityEnabler hq(p);
 				p.drawEllipse(_origin, radius, radius);
 			}
+			auto noise = QImage(
+				_frame.size(),
+				QImage::Format_ARGB32_Premultiplied);
+			noise.fill(Qt::transparent);
+			noise.setDevicePixelRatio(_frame.devicePixelRatio());
+			const auto light = color.lighter(110);
+			auto noisePixels = reinterpret_cast<uint32_t*>(noise.bits());
+			const auto bpl = noise.bytesPerLine() / 4;
+			const auto w = _frame.width();
+			const auto h = _frame.height();
+			for (auto by = 0; by < _noiseBlockH; ++by) {
+				for (auto bx = 0; bx < _noiseBlockW; ++bx) {
+					const auto random = _noisePattern[by * _noiseBlockW + bx];
+					if (random > 230) {
+						const auto alpha = (random - 230) * 255 / 25;
+						const auto pixel = qPremultiply(qRgba(
+							light.red(),
+							light.green(),
+							light.blue(),
+							alpha));
+						const auto y0 = by * 2;
+						const auto x0 = bx * 2;
+						noisePixels[y0 * bpl + x0] = pixel;
+						if (x0 + 1 < w) {
+							noisePixels[y0 * bpl + x0 + 1] = pixel;
+						}
+						if (y0 + 1 < h) {
+							noisePixels[(y0 + 1) * bpl + x0] = pixel;
+							if (x0 + 1 < w) {
+								noisePixels[(y0 + 1) * bpl + x0 + 1] = pixel;
+							}
+						}
+					}
+				}
+			}
+			{
+				const auto ratio = _frame.devicePixelRatio();
+				const auto logicalW = w / ratio;
+				const auto logicalH = h / ratio;
+				QPainter noisePainter(&noise);
+				auto noiseMask = QRadialGradient(
+					QPointF(_origin),
+					safeRadius);
+				noiseMask.setColorAt(0.0, QColor(0, 0, 0, 0));
+				noiseMask.setColorAt(0.46, QColor(0, 0, 0, 0));
+				noiseMask.setColorAt(0.56, QColor(0, 0, 0, 255));
+				noiseMask.setColorAt(0.84, QColor(0, 0, 0, 255));
+				noiseMask.setColorAt(0.92, QColor(0, 0, 0, 0));
+				noiseMask.setColorAt(1.0, QColor(0, 0, 0, 0));
+				noisePainter.setCompositionMode(
+					QPainter::CompositionMode_DestinationIn);
+				noisePainter.setPen(Qt::NoPen);
+				noisePainter.setBrush(noiseMask);
+				noisePainter.drawRect(
+					QRectF(0, 0, logicalW, logicalH));
+			}
 			p.setCompositionMode(QPainter::CompositionMode_DestinationIn);
 			p.drawPixmap(0, 0, mask);
+			p.setCompositionMode(QPainter::CompositionMode_Plus);
+			p.drawImage(0, 0, noise);
 		}
 		if (radius == _radiusTo && colorOverride == nullptr) {
 			_cache = PixmapFromImage(std::move(_frame));
