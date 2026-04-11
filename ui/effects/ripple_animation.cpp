@@ -130,7 +130,6 @@ void RippleAnimation::Ripple::paint(
 		//anim::interpolateF(_radiusFrom, _radiusTo, shown);
 		Assert(!std::isnan(interpolated));
 		auto radius = int(base::SafeRound(interpolated));
-		//anim::interpolate(_radiusFrom, _radiusTo, _show.value(1.));
 		_frame.fill(Qt::transparent);
 		{
 			QPainter p(&_frame);
@@ -139,11 +138,15 @@ void RippleAnimation::Ripple::paint(
 				? *colorOverride
 				: QColor(_st.color->c);
 			const auto safeRadius = std::max(radius, 1);
+			const auto edgeWidth = 56.0;
+			const auto innerStop = std::max(
+				0.0,
+				1.0 - edgeWidth / safeRadius);
 			auto gradient = QRadialGradient(
 				QPointF(_origin),
 				safeRadius);
 			gradient.setColorAt(0.0, color);
-			gradient.setColorAt(0.55, color);
+			gradient.setColorAt(innerStop, color);
 			gradient.setColorAt(1.0, QColor(
 				color.red(),
 				color.green(),
@@ -159,7 +162,10 @@ void RippleAnimation::Ripple::paint(
 				QImage::Format_ARGB32_Premultiplied);
 			noise.fill(Qt::transparent);
 			noise.setDevicePixelRatio(_frame.devicePixelRatio());
-			const auto light = color.lighter(110);
+			const auto light = QColor(
+				color.red() + (255 - color.red()) * 3 / 10,
+				color.green() + (255 - color.green()) * 3 / 10,
+				color.blue() + (255 - color.blue()) * 3 / 10);
 			auto noisePixels = reinterpret_cast<uint32_t*>(noise.bits());
 			const auto bpl = noise.bytesPerLine() / 4;
 			const auto w = _frame.width();
@@ -168,7 +174,7 @@ void RippleAnimation::Ripple::paint(
 				for (auto bx = 0; bx < _noiseBlockW; ++bx) {
 					const auto random = _noisePattern[by * _noiseBlockW + bx];
 					if (random > 230) {
-						const auto alpha = (random - 230) * 255 / 25;
+						const auto alpha = (random - 230) * 80 / 25;
 						const auto pixel = qPremultiply(qRgba(
 							light.red(),
 							light.green(),
@@ -194,15 +200,25 @@ void RippleAnimation::Ripple::paint(
 				const auto logicalW = w / ratio;
 				const auto logicalH = h / ratio;
 				QPainter noisePainter(&noise);
+				const auto ringInward = 16.0;
+				const auto ringFade = 8.0;
+				const auto ringFullStop = std::max(
+					0.01,
+					innerStop - ringInward / safeRadius);
+				const auto ringFadeStop = std::max(
+					0.0,
+					innerStop - (ringInward + ringFade) / safeRadius);
 				auto noiseMask = QRadialGradient(
 					QPointF(_origin),
 					safeRadius);
 				noiseMask.setColorAt(0.0, QColor(0, 0, 0, 0));
-				noiseMask.setColorAt(0.46, QColor(0, 0, 0, 0));
-				noiseMask.setColorAt(0.56, QColor(0, 0, 0, 255));
-				noiseMask.setColorAt(0.84, QColor(0, 0, 0, 255));
-				noiseMask.setColorAt(0.92, QColor(0, 0, 0, 0));
-				noiseMask.setColorAt(1.0, QColor(0, 0, 0, 0));
+				if (ringFadeStop + 0.001 < ringFullStop) {
+					noiseMask.setColorAt(
+						ringFadeStop,
+						QColor(0, 0, 0, 0));
+				}
+				noiseMask.setColorAt(ringFullStop, QColor(0, 0, 0, 255));
+				noiseMask.setColorAt(1.0, QColor(0, 0, 0, 255));
 				noisePainter.setCompositionMode(
 					QPainter::CompositionMode_DestinationIn);
 				noisePainter.setPen(Qt::NoPen);
@@ -210,10 +226,10 @@ void RippleAnimation::Ripple::paint(
 				noisePainter.drawRect(
 					QRectF(0, 0, logicalW, logicalH));
 			}
+			p.setCompositionMode(QPainter::CompositionMode_SourceAtop);
+			p.drawImage(0, 0, noise);
 			p.setCompositionMode(QPainter::CompositionMode_DestinationIn);
 			p.drawPixmap(0, 0, mask);
-			p.setCompositionMode(QPainter::CompositionMode_Plus);
-			p.drawImage(0, 0, noise);
 		}
 		if (radius == _radiusTo && colorOverride == nullptr) {
 			_cache = PixmapFromImage(std::move(_frame));
