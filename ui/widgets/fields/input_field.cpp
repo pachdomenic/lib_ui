@@ -1609,11 +1609,6 @@ InputField::InputField(
 	_inner->setContentsMargins(0, 0, 0, 0);
 	_inner->document()->setDocumentMargin(0);
 
-	setAttribute(Qt::WA_AcceptTouchEvents);
-	_inner->viewport()->setAttribute(Qt::WA_AcceptTouchEvents);
-
-	_touchTimer.setCallback([=] { _touchRightButton = true; });
-
 	base::qt_signal_producer(
 		_inner->document(),
 		&QTextDocument::contentsChange
@@ -1791,16 +1786,7 @@ void InputField::setBlockquoteCache(
 }
 
 bool InputField::viewportEventInner(QEvent *e) {
-	if (e->type() == QEvent::TouchBegin
-		|| e->type() == QEvent::TouchUpdate
-		|| e->type() == QEvent::TouchEnd
-		|| e->type() == QEvent::TouchCancel) {
-		const auto ev = static_cast<QTouchEvent*>(e);
-		if (ev->device()->type() == base::TouchDevice::TouchScreen) {
-			handleTouchEvent(ev);
-			return false;
-		}
-	} else if (e->type() == QEvent::Paint && _customObject) {
+	if (e->type() == QEvent::Paint && _customObject) {
 		_customObject->setNow(crl::now());
 	}
 	return _inner->QTextEdit::viewportEvent(e);
@@ -2182,6 +2168,11 @@ void InputField::paintQuotes(QPaintEvent *e) {
 	}
 }
 
+void InputField::setPlaceholderColorOverride(const style::color &color) {
+	_placeholderFgOverride = color;
+	update();
+}
+
 void InputField::setDocumentMargin(float64 margin) {
 	_settingDocumentMargin = true;
 	document()->setDocumentMargin(margin);
@@ -2346,71 +2337,6 @@ void InputField::checkContentHeight() {
 	}
 }
 
-void InputField::handleTouchEvent(QTouchEvent *e) {
-	switch (e->type()) {
-	case QEvent::TouchBegin: {
-		if (_touchPress || e->touchPoints().isEmpty()) {
-			return;
-		}
-		_touchTimer.callOnce(QApplication::startDragTime());
-		_touchPress = true;
-		_touchMove = _touchRightButton = false;
-		_touchStart = e->touchPoints().cbegin()->screenPos().toPoint();
-	} break;
-
-	case QEvent::TouchUpdate: {
-		if (!e->touchPoints().isEmpty()) {
-			touchUpdate(e->touchPoints().cbegin()->screenPos().toPoint());
-		}
-	} break;
-
-	case QEvent::TouchEnd: {
-		touchFinish();
-	} break;
-
-	case QEvent::TouchCancel: {
-		_touchPress = false;
-		_touchTimer.cancel();
-	} break;
-	}
-}
-
-void InputField::touchUpdate(QPoint globalPosition) {
-	if (_touchPress
-		&& !_touchMove
-		&& ((globalPosition - _touchStart).manhattanLength()
-			>= QApplication::startDragDistance())) {
-		_touchMove = true;
-	}
-}
-
-void InputField::touchFinish() {
-	if (!_touchPress) {
-		return;
-	}
-	const auto weak = base::make_weak(this);
-	if (!_touchMove && window()) {
-		QPoint mapped(mapFromGlobal(_touchStart));
-
-		if (_touchRightButton) {
-			QContextMenuEvent contextEvent(
-				QContextMenuEvent::Mouse,
-				mapped,
-				_touchStart);
-			contextMenuEvent(&contextEvent);
-		} else {
-			QGuiApplication::inputMethod()->show();
-		}
-	}
-	if (weak) {
-		_touchTimer.cancel();
-		_touchPress
-			= _touchMove
-			= _touchRightButton
-			= _mousePressedInTouch = false;
-	}
-}
-
 void InputField::paintSurrounding(
 		QPainter &p,
 		QRect clip,
@@ -2495,8 +2421,11 @@ void InputField::paintEvent(QPaintEvent *e) {
 		if (style::RightToLeft()) r.moveLeft(width() - r.left() - r.width());
 
 		auto placeholderScale = 1. - (1. - _st.placeholderScale) * placeholderShiftDegree;
-		auto placeholderFg = anim::color(_st.placeholderFg, _st.placeholderFgActive, focusedDegree);
-		placeholderFg = anim::color(placeholderFg, _st.placeholderFgError, errorDegree);
+		const auto &phFg = _placeholderFgOverride.value_or(_st.placeholderFg);
+		const auto &phFgActive = _placeholderFgOverride.value_or(_st.placeholderFgActive);
+		const auto &phFgError = _placeholderFgOverride.value_or(_st.placeholderFgError);
+		auto placeholderFg = anim::color(phFg, phFgActive, focusedDegree);
+		placeholderFg = anim::color(placeholderFg, phFgError, errorDegree);
 
 		PainterHighQualityEnabler hq(p);
 		p.setPen(Qt::NoPen);
@@ -2516,7 +2445,9 @@ void InputField::paintEvent(QPaintEvent *e) {
 			const auto placeholderLeft = anim::interpolate(0, -_st.placeholderShift, placeholderHiddenDegree);
 
 			p.setFont(_st.placeholderFont);
-			p.setPen(anim::pen(_st.placeholderFg, _st.placeholderFgActive, focusedDegree));
+			const auto &phFg2 = _placeholderFgOverride.value_or(_st.placeholderFg);
+			const auto &phFgActive2 = _placeholderFgOverride.value_or(_st.placeholderFgActive);
+			p.setPen(anim::pen(phFg2, phFgActive2, focusedDegree));
 			if (_st.placeholderAlign == style::al_topleft && _placeholderAfterSymbols > 0) {
 				const auto skipWidth = placeholderSkipWidth();
 				p.drawText(
@@ -2582,14 +2513,9 @@ void InputField::mousePressEvent(QMouseEvent *e) {
 }
 
 void InputField::mousePressEventInner(QMouseEvent *e) {
-	if (_touchPress && e->button() == Qt::LeftButton) {
-		_mousePressedInTouch = true;
-		_touchStart = e->globalPos();
-	} else {
-		_selectedActionQuoteId = lookupActionQuoteId(e->pos());
-		_pressedActionQuoteId = _selectedActionQuoteId;
-		updateCursorShape();
-	}
+	_selectedActionQuoteId = lookupActionQuoteId(e->pos());
+	_pressedActionQuoteId = _selectedActionQuoteId;
+	updateCursorShape();
 	if (_pressedActionQuoteId <= 0) {
 		_inner->QTextEdit::mousePressEvent(e);
 	}
@@ -2722,17 +2648,10 @@ void InputField::mouseReleaseEventInner(QMouseEvent *e) {
 		blockActionClicked(taken);
 	}
 	updateCursorShape();
-	if (_mousePressedInTouch) {
-		touchFinish();
-	} else {
-		_inner->QTextEdit::mouseReleaseEvent(e);
-	}
+	_inner->QTextEdit::mouseReleaseEvent(e);
 }
 
 void InputField::mouseMoveEventInner(QMouseEvent *e) {
-	if (_mousePressedInTouch) {
-		touchUpdate(e->globalPos());
-	}
 	_selectedActionQuoteId = lookupActionQuoteId(e->pos());
 	updateCursorShape();
 	_inner->QTextEdit::mouseMoveEvent(e);
