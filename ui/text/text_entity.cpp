@@ -10,6 +10,7 @@
 #include "base/qthelp_regex.h"
 #include "base/crc32hash.h"
 #include "ui/text/text.h"
+#include "ui/text/text_html_tags.h"
 #include "ui/widgets/fields/input_field.h"
 #include "ui/emoji_config.h"
 #include "ui/basic_click_handlers.h"
@@ -1181,13 +1182,17 @@ const QRegularExpression &RegExpWordSplit() {
 
 std::unique_ptr<QMimeData> MimeDataFromText(
 		TextWithTags &&text,
-		const QString &expanded) {
+		const QString &expanded,
+		const QString &html) {
 	if (expanded.isEmpty()) {
 		return nullptr;
 	}
 
 	auto result = std::make_unique<QMimeData>();
 	result->setText(expanded);
+	if (!html.isEmpty()) {
+		result->setHtml(html);
+	}
 	if (!text.tags.isEmpty()) {
 		for (auto &tag : text.tags) {
 			tag.id = Ui::Integration::Instance().convertTagToMimeTag(tag.id);
@@ -2359,6 +2364,10 @@ TextWithTags::Tags ConvertEntitiesToTextTags(
 				: Ui::InputField::kTagBlockquoteCollapsed);
 			break;
 		case EntityType::Spoiler: push(Ui::InputField::kTagSpoiler); break;
+		case EntityType::Subscript:
+		case EntityType::Superscript:
+		case EntityType::Marked:
+			break;
 		case EntityType::FormattedDate: {
 			const auto [date, flags] = DeserializeFormattedDateData(
 				entity.data());
@@ -2376,14 +2385,17 @@ TextWithTags::Tags ConvertEntitiesToTextTags(
 }
 
 std::unique_ptr<QMimeData> MimeDataFromText(const TextForMimeData &text) {
+	const auto html = TextUtilities::TextForMimeDataToHtml(text);
 	return MimeDataFromText(
 		{ text.rich.text, ConvertEntitiesToTextTags(text.rich.entities) },
-		text.expanded);
+		text.expanded,
+		html);
 }
 
 std::unique_ptr<QMimeData> MimeDataFromText(TextWithTags &&text) {
 	const auto expanded = ExpandCustomLinks(text);
-	return MimeDataFromText(std::move(text), expanded);
+	const auto html = TextUtilities::TextWithTagsToHtml(text);
+	return MimeDataFromText(std::move(text), expanded, html);
 }
 
 void SetClipboardText(
