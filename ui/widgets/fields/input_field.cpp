@@ -1072,7 +1072,7 @@ QString AccumulateText(Iterator begin, Iterator end) {
 QTextImageFormat PrepareEmojiFormat(EmojiPtr emoji, int emojiHeight) {
 	const auto factor = style::DevicePixelRatio();
 	const auto size = std::max(emojiHeight * factor, Emoji::GetSizeNormal());
-	const auto width = size + st::emojiPadding * factor * 2;
+	const auto width = Emoji::GetSizeNormal() + st::emojiPadding * factor * 2;
 	auto result = QTextImageFormat();
 	result.setWidth(width / factor);
 	result.setHeight(size / factor);
@@ -1781,6 +1781,11 @@ bool MarkdownEnabledState::enabledForTag(QStringView tag) const {
 		&& (yes->tagsSubset.empty() || yes->tagsSubset.contains(tag));
 }
 
+bool MarkdownEnabledState::typedTagsEnabled() const {
+	const auto yes = std::get_if<MarkdownEnabled>(&data);
+	return yes && yes->typedTags;
+}
+
 InputField::InputField(
 	QWidget *parent,
 	const style::InputField &st,
@@ -2182,7 +2187,7 @@ void InputField::setMarkdownReplacesEnabled(
 	) | rpl::on_next([=](MarkdownEnabledState state) {
 		if (_markdownEnabledState != state) {
 			_markdownEnabledState = state;
-			if (_markdownEnabledState.disabled()) {
+			if (!_markdownEnabledState.typedTagsEnabled()) {
 				_lastMarkdownTags = {};
 			} else {
 				handleContentsChanged();
@@ -3870,7 +3875,9 @@ void InputField::handleContentsChanged() {
 		-1,
 		_lastTextWithTags.tags,
 		tagsChanged,
-		_markdownEnabledState.disabled() ? nullptr : &_lastMarkdownTags);
+		(_markdownEnabledState.typedTagsEnabled()
+			? &_lastMarkdownTags
+			: nullptr));
 
 	//highlightMarkdown();
 	if (_spoilerRangesText.empty() && _spoilerRangesEmoji.empty()) {
@@ -4090,7 +4097,8 @@ TextWithTags InputField::getTextWithTagsPart(int start, int end) const {
 }
 
 TextWithTags InputField::getTextWithAppliedMarkdown() const {
-	if (_markdownEnabledState.disabled() || _lastMarkdownTags.empty()) {
+	if (!_markdownEnabledState.typedTagsEnabled()
+		|| _lastMarkdownTags.empty()) {
 		return getTextWithTags();
 	}
 	const auto &originalText = _lastTextWithTags.text;
@@ -5515,7 +5523,17 @@ QString InputField::selectionMarkdownTagForToggle(const QString &tag) const {
 			|| IsNewline(text[0])
 			|| IsNewline(text[text.size() - 1]);
 	}();
-	return (leftForBlock && rightForBlock) ? kTagPre : kTagCode;
+	const auto singleLine = [&] {
+		for (auto position = from; position != till; ++position) {
+			if (IsNewline(document()->characterAt(position))) {
+				return false;
+			}
+		}
+		return true;
+	};
+	return (leftForBlock && rightForBlock && !singleLine())
+		? kTagPre
+		: kTagCode;
 }
 
 void InputField::toggleCurrentMarkdownTag(const QString &tag) {

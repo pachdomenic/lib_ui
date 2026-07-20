@@ -330,6 +330,8 @@ auto RpWidgetWrap::eventStreams() const -> EventStreams& {
 void AccessibilityState::writeTo(QAccessible::State &state) {
 	state.checkable = checkable ? 1 : 0;
 	state.checked = checked ? 1 : 0;
+	state.extSelectable = extSelectable ? 1 : 0;
+	state.multiSelectable = multiSelectable ? 1 : 0;
 	state.pressed = pressed ? 1 : 0;
 	state.readOnly = readOnly ? 1 : 0;
 	state.selectable = selectable ? 1 : 0;
@@ -455,6 +457,24 @@ void RpWidget::accessibilityChildFocused(int index) {
 	QAccessible::updateAccessibility(&event);
 }
 
+bool RpWidget::accessibilityChildSupportsActions(int index) const {
+	return false;
+}
+
+quintptr RpWidget::accessibilityChildIdentity(int index) const {
+	return 0;
+}
+
+int RpWidget::accessibilityChildIndexByIdentity(quintptr identity) const {
+	return -1;
+}
+
+void RpWidget::accessibilityChildSetFocus(quintptr identity) {
+}
+
+void RpWidget::accessibilityChildActivate(quintptr identity) {
+}
+
 QString RpWidget::accessibilityName() {
 	return QWidget::accessibleName();
 }
@@ -530,6 +550,17 @@ QAccessibleInterface *RpWidget::accessibilityChildInterface(
 	auto &ids = items.list;
 	if (int(ids.size()) < count) {
 		ids.resize(count);
+	}
+	// Drop a cached item whose row was reordered or replaced, so its stable
+	// identity (and the data the screen reader reads) stays in sync with the
+	// row currently at this index. Destroying the stale item also invalidates
+	// any provider the assistive technology may still be holding for it.
+	if (ids[index]) {
+		const auto identity = accessibilityChildIdentity(index);
+		const auto cached = dynamic_cast<Accessible::Item*>(ids[index].get());
+		if (cached && cached->identity() != identity) {
+			ids[index] = Accessible::UniqueId();
+		}
 	}
 	if (!ids[index]) {
 		ids[index] = Accessible::UniqueId(
