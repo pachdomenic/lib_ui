@@ -86,6 +86,8 @@ class CustomFieldObject;
 
 struct MarkdownEnabled {
 	base::flat_set<QString> tagsSubset;
+	bool typedTags = true;
+	bool instantTags = false;
 
 	friend inline bool operator==(
 		const MarkdownEnabled &,
@@ -101,6 +103,8 @@ struct MarkdownEnabledState {
 
 	[[nodiscard]] bool disabled() const;
 	[[nodiscard]] bool enabledForTag(QStringView tag) const;
+	[[nodiscard]] bool typedTagsEnabled() const;
+	[[nodiscard]] bool instantTagsEnabled() const;
 
 	friend inline bool operator==(
 		const MarkdownEnabledState &,
@@ -143,6 +147,11 @@ public:
 
 		bool closed = false;
 		QString tag;
+	};
+
+	struct TabbedRequest {
+		bool backward = false;
+		bool handled = false;
 	};
 	static const QString kTagBold;
 	static const QString kTagItalic;
@@ -242,12 +251,18 @@ public:
 		Check,
 		Edit,
 	};
+	enum class EditLinkItems : uchar {
+		None,
+		DateOnly,
+		LinkAndDate,
+	};
 	void setEditLinkCallback(
 		Fn<bool(
 			EditLinkSelection selection,
 			TextWithTags text,
 			QString link,
-			EditLinkAction action)> callback);
+			EditLinkAction action)> callback,
+		EditLinkItems items = EditLinkItems::LinkAndDate);
 	void setEditLanguageCallback(
 		Fn<void(QString now, Fn<void(QString)> save)> callback);
 
@@ -363,6 +378,8 @@ public:
 	void setFocus();
 	void clearFocus();
 	void ensureCursorVisible();
+	Qt::InputMethodHints inputMethodHints() const;
+	void setInputMethodHints(Qt::InputMethodHints hints);
 	not_null<QTextEdit*> rawTextEdit();
 	not_null<const QTextEdit*> rawTextEdit() const;
 
@@ -401,7 +418,7 @@ public:
 
 	[[nodiscard]] rpl::producer<> heightChanges() const;
 	[[nodiscard]] rpl::producer<bool> focusedChanges() const;
-	[[nodiscard]] rpl::producer<not_null<bool*>> tabbed() const;
+	[[nodiscard]] rpl::producer<not_null<TabbedRequest*>> tabbed() const;
 	[[nodiscard]] rpl::producer<> cancelled() const;
 	[[nodiscard]] rpl::producer<> changes() const;
 	[[nodiscard]] rpl::producer<Qt::KeyboardModifiers> submits() const;
@@ -438,6 +455,7 @@ private:
 	};
 
 	void handleContentsChanged();
+	void refreshSpoilerOverlay();
 	void updateRootFrameFormat();
 	bool viewportEventInner(QEvent *e);
 
@@ -463,6 +481,7 @@ private:
 	void contextMenuEventInner(QContextMenuEvent *e);
 	void dropEventInner(QDropEvent *e);
 	void inputMethodEventInner(QInputMethodEvent *e);
+	void updateInnerInputMethodHints();
 	void paintEventInner(QPaintEvent *e);
 	void paintQuotes(QPaintEvent *e);
 
@@ -537,6 +556,7 @@ private:
 		EditLinkData *outData);
 	void editMarkdownLink(EditLinkSelection selection);
 	void editMarkdownDate(EditLinkSelection selection);
+	[[nodiscard]] EditLinkItems editLinkItems() const;
 
 	void commitInstantReplacement(
 		int from,
@@ -545,13 +565,11 @@ private:
 		const QString &customEmojiData,
 		std::optional<QString> checkOriginal,
 		bool checkIfInMonospace);
-#if 0
 	bool commitMarkdownReplacement(
 		int from,
 		int till,
 		const QString &tag,
 		const QString &edge = QString());
-#endif
 	TextRange insertWithTags(TextRange range, TextWithTags text);
 	TextRange addMarkdownTag(TextRange range, const QString &tag);
 	void removeMarkdownTag(TextRange range, const QString &tag);
@@ -602,6 +620,7 @@ private:
 	int _maxHeight = -1;
 
 	const std::unique_ptr<Inner> _inner;
+	Qt::InputMethodHints _inputMethodHints;
 
 	Fn<bool(
 		EditLinkSelection selection,
@@ -611,6 +630,7 @@ private:
 	Fn<void(QString now, Fn<void(QString)> save)> _editLanguageCallback;
 	TextWithTags _lastTextWithTags;
 	std::vector<MarkdownTag> _lastMarkdownTags;
+	bool _committingMarkdownReplacement = false;
 	QString _lastPreEditText;
 	std::optional<QString> _inputMethodCommit;
 	mutable std::vector<TextRange> _spoilerRangesText;
@@ -650,6 +670,7 @@ private:
 	SubmitSettings _submitSettings = SubmitSettings::Enter;
 	MarkdownEnabledState _markdownEnabledState;
 	MarkdownSet _markdownSet = MarkdownSet::All;
+	EditLinkItems _editLinkItems = EditLinkItems::LinkAndDate;
 	bool _instantViewEditorTagsEnabled = false;
 	bool _undoAvailable = false;
 	bool _redoAvailable = false;
@@ -711,7 +732,7 @@ private:
 
 	rpl::event_stream<bool> _focusedChanges;
 	rpl::event_stream<> _heightChanges;
-	rpl::event_stream<not_null<bool*>> _tabbed;
+	rpl::event_stream<not_null<TabbedRequest*>> _tabbed;
 	rpl::event_stream<> _cancelled;
 	rpl::event_stream<> _changes;
 	rpl::event_stream<Qt::KeyboardModifiers> _submits;
