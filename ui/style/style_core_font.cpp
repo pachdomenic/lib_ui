@@ -44,6 +44,7 @@ namespace {
 constexpr auto kSubSuperMultiplier = 0.75;
 
 QString Custom;
+QString CustomMonospace;
 
 } // namespace
 
@@ -54,6 +55,10 @@ const QString &SystemFontTag() {
 
 void SetCustomFont(const QString &font) {
 	Custom = font;
+}
+
+void SetCustomMonospaceFont(const QString &font) {
+	CustomMonospace = font;
 }
 
 namespace internal {
@@ -163,7 +168,7 @@ bool LoadCustomFont(const QString &filePath) {
 	return QString();
 }
 
-[[nodiscard]] QString MonospaceFont() {
+[[nodiscard]] QString AutoMonospaceFont() {
 	static const auto family = [&]() -> QString {
 		const auto manual = ManualMonospaceFont();
 		const auto system = SystemMonospaceFont();
@@ -181,6 +186,10 @@ bool LoadCustomFont(const QString &filePath) {
 	}();
 
 	return family;
+}
+
+[[nodiscard]] QString MonospaceFont() {
+	return CustomMonospace.isEmpty() ? AutoMonospaceFont() : CustomMonospace;
 }
 
 struct Metrics {
@@ -559,6 +568,10 @@ OwnedFont::OwnedFont(const QString &custom, FontFlags flags, int size)
 }
 
 } // namespace internal
+
+QString DefaultMonospaceFont() {
+	return internal::AutoMonospaceFont();
+}
 
 const FontResolveResult *FindAdjustResult(const QFont &font) {
 	const auto key = internal::QtFontKey(font);

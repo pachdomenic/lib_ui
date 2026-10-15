@@ -21,6 +21,8 @@ namespace style {
 
 [[nodiscard]] const QString &SystemFontTag();
 void SetCustomFont(const QString &font);
+void SetCustomMonospaceFont(const QString &font);
+[[nodiscard]] QString DefaultMonospaceFont();
 
 enum class FontFlag : uchar {
 	Bold       = 0x01,
